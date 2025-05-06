@@ -1,5 +1,10 @@
 import pygame
 import time
+import config
+
+
+from drinks import drink_list
+
 
 class GUI:
     def __init__(self, screen):
