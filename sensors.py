@@ -1,5 +1,6 @@
 import RPi.GPIO as GPIO
 from hx711 import HX711
+import config # config.py contains the necessary GPIO pin definitions
 import time
 
 GPIO.setmode(GPIO.BCM)
