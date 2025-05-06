@@ -6,11 +6,16 @@ class GUI:
         self.screen = screen
         self.font = pygame.font.Font(None, 28)
 
-        # Pre‑load recipe images
-        self.icons = {
-            d['name']: pygame.image.load(f"assets/{d['name'].lower().replace(' ','_')}.png")
-            for d in drink_list
-        }
+        # Pre‑load recipe images keyed by name
+        self.recipe_images = {}
+        for drink in drink_list:
+            try:
+                img = pygame.image.load(drink["image"]).convert_alpha()
+                # Optionally: scale to fit half the screen width
+                img = pygame.transform.smoothscale(img, (120, 120))
+                self.recipe_images[drink["name"]] = img
+            except Exception as e:
+                print(f"Failed loading {drink['image']}: {e}")
 
     def draw_text(self, text, pos):
         surf = self.font.render(text, True, (255,255,255))
@@ -25,12 +30,17 @@ class GUI:
         pygame.display.flip()
 
     def show_recipe(self, name, ingredients):
-        self.screen.fill((0,0,0))
-        icon = self.icons[name]
-        self.screen.blit(icon, (10,10))
+        self.screen.fill((0, 0, 0))
+        # Draw the image centered top‑left
+        img = self.recipe_images.get(name)
+        if img:
+            self.screen.blit(img, (10, 10))
+        # Draw ingredients list next to image
         y = 10
         for fluid, ml in ingredients.items():
-            self.draw_text(f"{fluid}: {ml}ml", (100, y))
+            text = self.font.render(f"{fluid}: {ml}ml", True, (255, 255, 255))
+            # Offset x by image width + padding
+            self.screen.blit(text, (140, y))
             y += 30
         pygame.display.flip()
 
