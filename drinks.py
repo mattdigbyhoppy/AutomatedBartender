@@ -5,12 +5,12 @@ BASE_ASSET_PATH = "assets"
 drink_list = [
     {
         "name": "Rum & Coke",
-        "image": f"{BASE_ASSET_PATH}/rum_and_coke.png",
+        "image": f"{BASE_ASSET_PATH}/rum_coke.png",
         "ingredients": {"rum": 50, "coke": 150}
     },
     {
         "name": "Gin & Tonic",
-        "image": f"{BASE_ASSET_PATH}/gin_and_tonic.png",
+        "image": f"{BASE_ASSET_PATH}/gin_tonic.png",
         "ingredients": {"gin": 50, "tonic": 150}
     },
     {
@@ -33,7 +33,7 @@ drink_list = [
     },
     {
         "name": "Gin & Juice",
-        "image": f"{BASE_ASSET_PATH}/gin_and_juice.png",
+        "image": f"{BASE_ASSET_PATH}/gin_juice.png",
         "ingredients": {"gin": 50, "oj": 150}
     },
     {
