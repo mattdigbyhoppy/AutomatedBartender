@@ -2,7 +2,7 @@ import RPi.GPIO as GPIO
 import time
 
 # GPIO pins for relays controlling pumps
-pump_pins = [24, 26, 28, 30, 32, 34]
+pump_pins = [24, 25, 12]
 
 # Setup GPIO mode
 GPIO.setmode(GPIO.BCM)
