@@ -8,7 +8,14 @@ import RPi.GPIO as GPIO      # Raspberry Pi GPIO library
 import json                  # JSON parsing for config
 import threading             # Threading for pump control
 import traceback             # Tracebacks for error handling
+import board
+import busio
 from hx711 import HX711       # HX711 ADC driver for load cell
+<<<<<<< HEAD
+=======
+from adafruit_dotstar import DotStar
+from dotstar import Adafruit_DotStar  # NeoPixel-style LED library
+>>>>>>> 6c9ec5a (Remove DotStar code & add emergency-stop support)
 from menu import MenuItem, Menu, Back, MenuContext, MenuDelegate
 from drinks import drink_list, drink_options
 
