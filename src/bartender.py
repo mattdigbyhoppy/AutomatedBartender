@@ -19,6 +19,12 @@ SCREEN_HEIGHT   = 64        # OLED height in pixels
 OLED_RESET_PIN  = 15        # Reset pin for OLED (not used in luma)
 OLED_DC_PIN     = 16        # Data/Command pin for OLED
 
+# Button GPIO assignments (BCM)
+BTN_CONFIRM  = 5   # physical pin 29
+BTN_CANCEL   = 6   # physical pin 31 ← EMERGENCY-STOP
+BTN_MENU     = 12  # physical pin 32
+BTN_SPECIAL  = 13  # physical pin 33
+
 # Pump flow rate: seconds needed to pour 1 mL
 FLOW_RATE = 60.0 / 100.0     # 0.6 s per mL
 
@@ -50,8 +56,17 @@ class Bartender(MenuDelegate):
 
         # --- Buttons ---
         for btn in (BTN_CONFIRM, BTN_CANCEL, BTN_MENU, BTN_SPECIAL):
-            GPIO.setup(btn, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        self.btn_confirm = BTN_CONFIRM
+            # pull-down so default is LOW, pressing bridges to 3.3 V → HIGH
+            GPIO.setup(btn, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+
+
+        GPIO.add_event_detect(
+            BTN_CANCEL,
+            GPIO.RISING,                # trigger when button goes HIGH
+            callback=self.emergency_stop_cb,
+            bouncetime=200
+        )
+
 
         # --- Initialize the HX711 load-cell interface (gandalf15 lib) ---
         GPIO.setup(TORSION_DT, GPIO.IN)
