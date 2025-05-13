@@ -1,1 +1,5 @@
-RPi.GPIO==0.6.3
+git+https://github.com/guyc/py-gaugette.git#egg=gaugette
+luma.oled
+smbus2
+RPi.GPIO
+git+https://github.com/gandalf15/HX711.git#egg=HX711
