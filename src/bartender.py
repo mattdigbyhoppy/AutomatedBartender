@@ -12,6 +12,8 @@ from drinks import drink_list, drink_options
 
 # Use BCM (Broadcom) pin numbering
 GPIO.setmode(GPIO.BCM)
+GPIO.setwarnings(False)
+
 
 # Display constants for the OLED
 SCREEN_WIDTH    = 128       # OLED width in pixels
@@ -19,11 +21,6 @@ SCREEN_HEIGHT   = 64        # OLED height in pixels
 OLED_RESET_PIN  = 15        # Reset pin for OLED (not used in luma)
 OLED_DC_PIN     = 16        # Data/Command pin for OLED
 
-# Button GPIO assignments (BCM)
-BTN_CONFIRM  = 5   # physical pin 29
-BTN_CANCEL   = 6   # physical pin 31 ← EMERGENCY-STOP
-BTN_MENU     = 12  # physical pin 32
-BTN_SPECIAL  = 13  # physical pin 33
 
 # Pump flow rate: seconds needed to pour 1 mL
 FLOW_RATE = 60.0 / 100.0     # 0.6 s per mL
@@ -32,9 +29,9 @@ FLOW_RATE = 60.0 / 100.0     # 0.6 s per mL
 IR_PIN       = 17  # IR break-beam sensor output
 TORSION_DT   = 4   # HX711 data pin
 TORSION_SCK  = 16  # HX711 clock pin
-BTN_CONFIRM  = 5   # Confirm button
+BTN_CONFIRM  = 12   # Confirm button
 BTN_CANCEL   = 6   # Cancel button
-BTN_MENU     = 12  # Menu navigation button
+BTN_MENU     = 5  # Menu navigation button
 BTN_SPECIAL  = 13  # Special function button
 
 # Glass weight thresholds and capacities
@@ -54,21 +51,23 @@ class Bartender(MenuDelegate):
         self.running = False  # Flag to disable input during pours
         self.emergency_stop = False
 
-        # --- Buttons ---
+        # configure all buttons as inputs, pulled down
         for btn in (BTN_CONFIRM, BTN_CANCEL, BTN_MENU, BTN_SPECIAL):
-            # pull-down so default is LOW, pressing bridges to 3.3 V → HIGH
             GPIO.setup(btn, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 
+        # keep these for wait_for_confirmation()
+        self.btn_confirm = BTN_CONFIRM
+        self.btn_cancel  = BTN_CANCEL
 
-        GPIO.add_event_detect(
-            BTN_CANCEL,
-            GPIO.RISING,                # trigger when button goes HIGH
-            callback=self.emergency_stop_cb,
-            bouncetime=200
-        )
+        # initialize the last-seen state for polling
+        self._last_state = {
+            BTN_CONFIRM: GPIO.LOW,
+            BTN_CANCEL:  GPIO.LOW,
+            BTN_MENU:    GPIO.LOW,
+            BTN_SPECIAL: GPIO.LOW
+        }
 
-
-        # --- Initialize the HX711 load-cell interface (gandalf15 lib) ---
+        # --- Initialize the HX711 load-cell interface ---
         GPIO.setup(TORSION_DT, GPIO.IN)
         GPIO.setup(TORSION_SCK, GPIO.OUT)
         self.hx = HX711(
@@ -82,22 +81,20 @@ class Bartender(MenuDelegate):
 
         # --- Initialize IR beam sensor ---
         GPIO.setup(IR_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        
+
         # Initialize the OLED via I2C
-        
         serial = i2c(port=1, address=0x3D)
         self.led = ssd1306(serial, width=SCREEN_WIDTH, height=SCREEN_HEIGHT)
-                           
         self.led.clear()
         self.led.show()
 
         # --- Load pump config and set up relay outputs ---
         self.pump_configuration = Bartender.readPumpConfiguration()
-        for pump in self.pump_configuration:
-            pin = self.pump_configuration[pump]["pin"]
-            GPIO.setup(pin, GPIO.OUT, initial=GPIO.HIGH)
+        for pump in self.pump_configuration.values():
+            GPIO.setup(pump['pin'], GPIO.OUT, initial=GPIO.HIGH)
 
         print("Done initializing")
+
 
     @staticmethod
     def readPumpConfiguration():
@@ -113,51 +110,62 @@ class Bartender(MenuDelegate):
         """
         with open('pump_config.json', 'w') as f:
             json.dump(configuration, f)
-
-    def startInterrupts(self):
+            
+    def pollButtons(self):
         """
-        Enable button interrupt(s) for Confirm and Cancel.
+        Poll each button once; on LOW?HIGH transition call its handler.
         """
-        # Remove any old watchers (safe even if none were set)
-        for pin in (self.btn_confirm, BTN_CANCEL):
-            try:
-                GPIO.remove_event_detect(pin)
-            except Exception:
-                pass
+        for pin, handler in (
+            (BTN_CONFIRM, self.confirm_btn),
+            (BTN_CANCEL,  self.emergency_stop_cb),
+            (BTN_MENU,    self.next_btn),
+            (BTN_SPECIAL, self.prev_btn),
+        ):
+            cur = GPIO.input(pin)
+            if cur == GPIO.HIGH and self._last_state[pin] == GPIO.LOW:
+                handler(pin)
+            self._last_state[pin] = cur
+       
+                    
+    def next_btn(self, channel):
+        """GPIO callback for the MENU button ? move to next menu item."""
+        print(f"[DEBUG] MENU button pressed (GPIO {channel})")
+        if not self.running:
+            self.menuContext.advance()
 
-        # Confirm button ? advance/select
-        GPIO.add_event_detect(
-            self.btn_confirm,
-            GPIO.FALLING,
-            callback=self.confirm_btn,
-            bouncetime=200
-        )
-
-        # Cancel button ? emergency stop
-        GPIO.add_event_detect(
-            BTN_CANCEL,
-            GPIO.FALLING,
-            callback=self.emergency_stop_cb,
-            bouncetime=200
-        )
-
-
-    def stopInterrupts(self):
+    def prev_btn(self, channel):
+        """SPECIAL: move to the previous menu item."""
+        print(f"[DEBUG] SPECIAL button pressed (GPIO {channel})")
+        if not self.running:
+            ctx = self.menuContext
+            # cycle backwards through options
+            menu = ctx.currentMenu
+            menu.selectedOption = (menu.selectedOption - 1) % len(menu.options)
+            ctx.display(menu.getSelection())
+        
+    def confirm_btn(self, channel):
         """
-        Disable interrupts to prevent input during pours.
+        GPIO callback for the CONFIRM button.
+        
         """
-        GPIO.remove_event_detect(self.btn_confirm)
+        print(f"[DEBUG] CONFIRM button pressed (GPIO {channel})")
+        if not self.running:
+            self.menuContext.select()
 
     def buildMenu(self, drink_list, drink_options):
         """
         Build the hierarchical menu structure:
-        - Top level: drinks + 'Configure'
-        - Configure: submenus for each pump to select liquid
+        - Top level: drinks + 'Settings'
+        - Settings: submenus for each pump to select liquid
         """
         m = Menu("Main Menu")
+
+        # 1) Add all drinks
         for d in drink_list:
             m.addOption(MenuItem('drink', d['name'], {'ingredients': d['ingredients']}))
-        config = Menu('Configure')
+
+        # 2) Add the settings submenu (was called 'Configure')
+        settings = Menu('Settings')
         for p in sorted(self.pump_configuration.keys()):
             sub = Menu(self.pump_configuration[p]['name'])
             for opt in drink_options:
@@ -168,11 +176,17 @@ class Bartender(MenuDelegate):
                     {'key': p, 'value': opt['value']}
                 ))
             sub.addOption(Back('Back'))
-            sub.setParent(config)
-            config.addOption(sub)
-        config.addOption(MenuItem('clean', 'Clean'))
-        m.addOption(config)
+            sub.setParent(settings)
+            settings.addOption(sub)
+
+        # 3) Keep the clean option
+        settings.addOption(MenuItem('clean', 'Clean'))
+
+        # 4) Finally tack it on
+        m.addOption(settings)
+
         self.menuContext = MenuContext(m, self)
+
 
     def filterDrinks(self, menu):
         """
@@ -202,7 +216,7 @@ class Bartender(MenuDelegate):
                 self.selectConfigurations(item)
 
     def prepareForRender(self, menu):
-        self.filterDrinks(menu)
+        # self.filterDrinks(menu)
         self.selectConfigurations(menu)
         return True
 
@@ -282,62 +296,51 @@ class Bartender(MenuDelegate):
 
     def makeDrink(self, drink, ingredients):
         """
-        Main sequence to measure glass, scale recipe, confirm, and pour,
+        Main sequence to scale recipe for a fixed 250 mL glass, confirm, and pour,
         with emergency-stop support.
         """
         # Reset emergency flag at start
         self.emergency_stop = False
 
-        # 1) Ensure sensors are healthy and glass is present
-        if not self.check_sensors():
-            with canvas(self.led) as draw:
-                draw.text((0, 20), "Place glass & retry", fill="white")
-            time.sleep(2)
-            return
-
-        # 2) Identify glass size
-        glass = self.detect_glass_type()
-        if not glass:
-            with canvas(self.led) as draw:
-                draw.text((0, 20), "Invalid glass!", fill="white")
-            time.sleep(2)
-            return
-
-        # 3) Scale ingredients to the detected glass capacity
-        cap = SMALL_CAPACITY if glass == 'small' else LARGE_CAPACITY
+        # 1) Scale ingredients to fixed 250 mL glass
+        glass_vol = 250.0  # mL
         total_vol = sum(ingredients.values())
-        scale = cap / float(total_vol)
+        scale = glass_vol / float(total_vol)
         scaled = {ing: vol * scale for ing, vol in ingredients.items()}
 
-        # 4) Prompt user to confirm pour
+        # 2) Prompt user to confirm pour
         with canvas(self.led) as draw:
-            draw.text((0, 10), f"{glass.title()} glass", fill="white")
+            draw.text((0, 10), "250mL glass", fill="white")
             draw.text((0, 40), "Press Confirm", fill="white")
         self.wait_for_confirmation()
         if self.emergency_stop:
             return
 
-        # 5) Start pouring threads
+        # 3) Start pouring threads
         self.running = True
         threads = []
-        max_time = 0
+        max_time = 0.0
         for ing, vol in scaled.items():
             for key, p in self.pump_configuration.items():
                 if ing == p['value']:
                     t = vol * FLOW_RATE
                     max_time = max(max_time, t)
-                    threads.append(threading.Thread(target=self.pour, args=(p['pin'], t)))
+                    threads.append(threading.Thread(
+                        target=self.pour,
+                        args=(p['pin'], t)
+                    ))
+                    
         for thr in threads:
             thr.start()
 
-        # 6) Display progress bar (can abort early on emergency_stop)
+        # 4) Display progress bar (can abort early on emergency_stop)
         self.progressBar(max_time)
 
-        # 7) Wait for all pump threads to finish
+        # 5) Wait for all pump threads to finish
         for thr in threads:
             thr.join()
 
-        # 8) Return to main menu
+        # 6) Return to main menu
         self.menuContext.showMenu()
         self.running = False
 
@@ -370,32 +373,30 @@ class Bartender(MenuDelegate):
 
     def prime_pumps(self):
         """
-        Prompt user and run all pumps for PRIME_TIME seconds to prime tubing.
+        Run all pumps for PRIME_TIME seconds to prime tubing,
+        with an on-screen status update.
         """
-        # 1) Prompt user to prime the pumps
+        # 1) Notify user that priming is starting
         with canvas(self.led) as draw:
-            draw.text((0, 20), "Prime pumps? Press OK", fill="white")
+            draw.text((0, 20), "Priming pumps...", fill="white")
 
-        # 2) Wait for confirm button press
-        self.wait_for_confirmation()
-        if self.emergency_stop:
-            return
+        # 2) Activate all pumps (relays are active LOW)
+        for pump in self.pump_configuration.values():
+            GPIO.output(pump['pin'], GPIO.LOW)
 
-        # 3) Activate all pumps (relays are active LOW)
-        for p in self.pump_configuration.values():
-            GPIO.output(p['pin'], GPIO.LOW)
-
-        # 4) Let them run for PRIME_TIME seconds
+        # 3) Let them run for PRIME_TIME seconds
         time.sleep(PRIME_TIME)
 
-        # 5) Turn pumps off
-        for p in self.pump_configuration.values():
-            GPIO.output(p['pin'], GPIO.HIGH)
+        # 4) Turn pumps off
+        for pump in self.pump_configuration.values():
+            GPIO.output(pump['pin'], GPIO.HIGH)
 
-        # 6) Notify user that priming is done
+        # 5) Notify user that priming is done
         with canvas(self.led) as draw:
             draw.text((0, 20), "Priming done", fill="white")
         time.sleep(2)
+
+
     
 
 
@@ -422,43 +423,48 @@ class Bartender(MenuDelegate):
         return self.is_glass_present() and (self.detect_glass_type() is not None)
 
     def run(self):
-    # 1) Prime the pumps
-        self.prime_pumps()
+        """
+        1) Ask once whether to prime.
+        2) Prime (or skip) on user choice.
+        3) Immediately show drink menu.
+        4) Poll buttons in a tight loop for navigation & selection.
+        """
+        # 1) Offer priming choice
+        with canvas(self.led) as draw:
+            draw.text((0, 20), "CONFIRM ? prime", fill="white")
+            draw.text((0, 40), "CANCEL  ? skip",  fill="white")
 
-        # 2) Loop until a valid glass is detected and confirmed
-        while True:
-            size = self.detect_glass_type()
-            if size:
-                with canvas(self.led) as draw:
-                    draw.text((0, 20), f"{size.title()} glass detected", fill="white")
-                    draw.text((0, 50), "Press Confirm", fill="white")
-                self.wait_for_confirmation()
-                if self.emergency_stop:
-                    return
-                break
-            else:
-                with canvas(self.led) as draw:
-                    draw.text((0, 20), "No glass detected", fill="white")
-                    draw.text((0, 50), "Place glass", fill="white")
-                time.sleep(1)
+        choice = None
+        while choice is None:
+            if GPIO.input(self.btn_confirm) == GPIO.HIGH:
+                choice = True
+            elif GPIO.input(self.btn_cancel) == GPIO.HIGH:
+                choice = False
+            time.sleep(0.05)
 
-        # 3) Now that a glass is in place, enable both Confirm & Cancel interrupts
-        self.startInterrupts()
+        # 2) Act on choice
+        if choice:
+            self.prime_pumps()
 
-        # 4) Idle loop until user selects a drink or hits Emergency-Stop
+        # clear any leftover emergency flag
+        self.emergency_stop = False
+
+        # 3) Show the menu once
+        self.menuContext.showMenu()
+
+        # 4) Poll buttons forever
         try:
             while True:
-                time.sleep(0.1)
-                if self.emergency_stop:
-                    # Return immediately to main menu
-                    self.menuContext.showMenu()
-                    self.emergency_stop = False
+                self.pollButtons()
+                time.sleep(0.05)
         except KeyboardInterrupt:
-            # (optional) handle Ctrl+C gracefully
             pass
         finally:
-            # Always clean up GPIO on exit
             GPIO.cleanup()
+
+
+
+
 
 
 
