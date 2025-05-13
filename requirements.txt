@@ -1,0 +1,5 @@
+git+https://github.com/guyc/py-gaugette.git
+luma.oled
+smbus2
+RPi.GPIO
+HX711
