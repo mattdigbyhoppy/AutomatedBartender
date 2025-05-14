@@ -281,26 +281,46 @@ class Bartender(MenuDelegate):
         GPIO.output(pin, GPIO.HIGH)
 
 
-    def progressBar(self, waitTime):
+    def progressBar(self, waitTime, dispenses):
         """
-        Draw a 0?100% progress bar over `waitTime` seconds,
-        aborting if emergency_stop gets set.
+        Draw a volume-based progress bar over `waitTime` seconds.
+        `dispenses` is a list of (volume_mL, pour_time_s) for each pump.
         """
-        interval = waitTime / 100.0
-        for pct in range(101):
-            # poll buttons so emergency-stop takes effect here
+        glass_vol = sum(vol for vol, _ in dispenses)
+        steps     = 100
+        interval  = waitTime / steps
+
+        for i in range(steps + 1):
+            # allow emergency stop at any time
             self.pollButtons()
             if self.emergency_stop:
                 break
 
+            elapsed    = i * interval
+            # sum up how much volume each pump has delivered so far
+            delivered = sum(vol * min(elapsed, t) / t for vol, t in dispenses)
+            pct        = delivered / glass_vol if glass_vol > 0 else 0.0
+
             with canvas(self.led) as draw:
-                x, y = 15, 15
-                w, h = SCREEN_WIDTH - 2*x, 10
+                # header
+                draw.text((0, 0), f"Pouring {int(glass_vol)} mL", fill="white")
+
+                # bar
+                x, y = 15, 20
+                w    = SCREEN_WIDTH - 2*x
+                h    = 10
                 draw.rectangle((x, y, x+w, y+h), outline="white")
-                fill = int(pct/100.0 * w)
-                draw.rectangle((x, y, x+fill, y+h), fill="white")
+                fill_w = int(pct * w)
+                draw.rectangle((x, y, x+fill_w, y+h), fill="white")
+
+                # counter
+                draw.text((0, y + h + 4),
+                          f"{int(delivered)}/{int(glass_vol)} mL",
+                          fill="white")
 
             time.sleep(interval)
+
+
 
 
     def emergency_stop_cb(self, channel):
@@ -321,12 +341,12 @@ class Bartender(MenuDelegate):
           0) wait for glass on the break-beam,
           1) let the user pick Shot (50 mL) or Regular (250 mL),
           2) confirm pour, and
-          3) pour with emergency support.
+          3) pour with emergency-stop support.
         """
-        # Reset emergency flag at start
+        # Reset emergency flag
         self.emergency_stop = False
 
-        # 0) Wait for glass to break the beam
+        # 0) Wait for glass
         with canvas(self.led) as draw:
             draw.text((0, 10), "Place glass to start", fill="white")
         while not self.is_glass_present():
@@ -336,15 +356,15 @@ class Bartender(MenuDelegate):
         time.sleep(0.5)
 
         # 1) Glass-size picker
-        options = [("Shot", 50.0), ("Regular", 250.0)]
-        sel = 1  # start on Regular
+        options = [("Shot",     50.0),
+                   ("Regular", 250.0)]
+        sel = 1  # default to Regular
         while True:
             with canvas(self.led) as draw:
-                draw.text((0, 5),  "Select Glass Size", fill="white")
+                draw.text((0,  5), "Select Glass Size", fill="white")
                 draw.text((0, 25), f"< {options[sel][0]} >", fill="white")
                 draw.text((0, 45), f"{int(options[sel][1])} mL", fill="white")
 
-            # handle button presses
             if GPIO.input(BTN_MENU) == GPIO.HIGH:
                 sel = (sel + 1) % 2
                 time.sleep(0.2)
@@ -359,46 +379,50 @@ class Bartender(MenuDelegate):
                 return
             time.sleep(0.05)
 
-        # 2) Scale ingredients to chosen glass volume
-        total_vol = sum(ingredients.values())
-        scale = glass_vol / float(total_vol)
+        # 2) Scale recipe to chosen glass volume
+        total = sum(ingredients.values())
+        scale = glass_vol / float(total)
         scaled = {ing: vol * scale for ing, vol in ingredients.items()}
 
-        # 3) Prompt user to confirm pour
-        with canvas(self.led) as draw:
-            draw.text((0, 10), f"{options[sel][0]} glass", fill="white")
-            draw.text((0, 40), "Press Confirm", fill="white")
-        self.wait_for_confirmation()
-        if self.emergency_stop:
-            return
-
-        # 4) Start pouring threads
-        self.running = True
-        threads = []
+        # build a list of (volume, pour_time) for each pump
+        dispenses = []
         max_time = 0.0
         for ing, vol in scaled.items():
             for key, p in self.pump_configuration.items():
                 if ing == p['value']:
                     t = vol * FLOW_RATE
                     max_time = max(max_time, t)
+                    dispenses.append((vol, t))
+
+        # 3) Confirm pour
+        with canvas(self.led) as draw:
+            draw.text((0, 10), f"{options[sel][0]} glass", fill="white")
+            draw.text((0, 40), "Press Confirm",   fill="white")
+        self.wait_for_confirmation()
+        if self.emergency_stop:
+            return
+
+        # 4) Fire pumps
+        self.running = True
+        threads = []
+        for ing, vol in scaled.items():
+            for key, p in self.pump_configuration.items():
+                if ing == p['value']:
+                    t = vol * FLOW_RATE
                     threads.append(threading.Thread(
-                        target=self.pour,
-                        args=(p['pin'], t)
+                        target=self.pour, args=(p['pin'], t)
                     ))
-        for thr in threads:
-            thr.start()
+        for thr in threads: thr.start()
 
-        # 5) Display progress bar (can abort early on emergency_stop)
-        self.progressBar(max_time)
+        # 5) Show volume-based progress
+        self.progressBar(max_time, dispenses)
 
-        # 6) Wait for all pump threads to finish
-        for thr in threads:
-            thr.join()
+        # 6) Wait for pumps to finish
+        for thr in threads: thr.join()
 
-        # 7) Return to main menu
+        # 7) Back to menu
         self.menuContext.showMenu()
         self.running = False
-
 
 
 
@@ -460,18 +484,14 @@ class Bartender(MenuDelegate):
             draw.text((0, 20), "Priming done", fill="white")
         time.sleep(2)
 
-
-    
-
-
-
-
     def is_glass_present(self):
         """
         Returns True when the IR beam is broken (glass is in place).
-        The logic is inverted from before: pull-up means HIGH when blocked.
+        Beam intact (no glass) ? GPIO HIGH
+        Beam broken (glass present) ? GPIO LOW
         """
-        return GPIO.input(IR_PIN) == GPIO.HIGH
+        return GPIO.input(IR_PIN) == GPIO.LOW
+
 
     
     def get_glass_weight(self):
