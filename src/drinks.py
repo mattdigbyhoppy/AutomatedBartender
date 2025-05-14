@@ -1,53 +1,59 @@
 # drinks.py
 drink_list = [
-	{
-		"name": "Rum & Coke",
-		"ingredients": {
-			"rum": 50,
-			"coke": 150
-		}
-	}, {
-		"name": "Gin & Tonic",
-		"ingredients": {
-			"gin": 50,
-			"tonic": 150
-		}
-	}, {
-		"name": "Long Island",
-		"ingredients": {
-			"gin": 15,
-			"rum": 15,
-			"vodka": 15,
-			"tequila": 15,
-			"coke": 100,
-			"oj": 30
-		}
-	}, {
-		"name": "Screwdriver",
-		"ingredients": {
-			"vodka": 50,
-			"oj": 150
-		}
-	}, {
-		"name": "Margarita",
-		"ingredients": {
-			"tequila": 50,
-			"mmix": 150
-		}
-	}, {
-		"name": "Gin & Juice",
-		"ingredients": {
-			"gin": 50,
-			"oj": 150
-		}
-	}, {
-		"name": "Tequila Sunrise",
-		"ingredients": {
-			"tequila": 50,
-			"oj": 150
-		}
-	}
+    {
+        "name": "Rum & Coke",
+        "ingredients": {
+            "rum": 50,
+            "coke": 150
+        }
+    },
+    {
+        "name": "Gin & Tonic",
+        "ingredients": {
+            "gin": 50,
+            "tonic": 150
+        }
+    },
+    {
+        "name": "Long Island",
+        "ingredients": {
+            "gin": 15,
+            "rum": 15,
+            "vodka": 15,
+            "tequila": 15,
+            "coke": 100,
+        }
+    },
+    {
+        "name": "Vodka & Tonic",
+        "ingredients": {
+            "vodka": 50,
+            "tonic": 150
+        }
+    },
+    {
+        "name": "Rum & Tonic",
+        "ingredients": {
+            "rum": 50,
+            "tonic": 150
+        }
+    },
+    {
+        "name": "Tequila & Tonic",
+        "ingredients": {
+            "tequila": 50,
+            "tonic": 150
+        }
+    },
+    {
+        "name": "Vodka & Coke",
+        "ingredients": {
+            "vodka": 50,
+            "coke": 150
+        }
+    }
 ]
+
 
 drink_options = [
 	{"name": "Gin", "value": "gin"},
