@@ -4,14 +4,14 @@ drink_list = [
         "name": "Rum & Coke",
         "ingredients": {
             "rum": 50,
-            "coke": 150
+            "coke": 200
         }
     },
     {
         "name": "Gin & Tonic",
         "ingredients": {
             "gin": 50,
-            "tonic": 150
+            "tonic": 200
         }
     },
     {
@@ -21,35 +21,35 @@ drink_list = [
             "rum": 15,
             "vodka": 15,
             "tequila": 15,
-            "coke": 100,
+            "coke": 140,
         }
     },
     {
         "name": "Vodka & Tonic",
         "ingredients": {
             "vodka": 50,
-            "tonic": 150
+            "tonic": 200
         }
     },
     {
         "name": "Rum & Tonic",
         "ingredients": {
             "rum": 50,
-            "tonic": 150
+            "tonic": 200
         }
     },
     {
         "name": "Tequila & Tonic",
         "ingredients": {
             "tequila": 50,
-            "tonic": 150
+            "tonic": 200
         }
     },
     {
         "name": "Vodka & Coke",
         "ingredients": {
             "vodka": 50,
-            "coke": 150
+            "coke": 200
         }
     }
 ]
