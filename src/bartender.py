@@ -26,7 +26,7 @@ OLED_DC_PIN     = 16        # Data/Command pin for OLED
 FLOW_RATE = 60.0 / 100.0     # 0.6 s per mL
 
 # Sensor & button GPIO assignments (BCM)
-IR_PIN       = 17  # IR break-beam sensor output
+IR_PIN       = 22  # IR break-beam sensor output
 TORSION_DT   = 4   # HX711 data pin
 TORSION_SCK  = 16  # HX711 clock pin
 BTN_CONFIRM  = 12   # Confirm button
@@ -70,14 +70,18 @@ class Bartender(MenuDelegate):
         # --- Initialize the HX711 load-cell interface ---
         GPIO.setup(TORSION_DT, GPIO.IN)
         GPIO.setup(TORSION_SCK, GPIO.OUT)
-        self.hx = HX711(
-            dout_pin       = TORSION_DT,
-            pd_sck_pin     = TORSION_SCK,
-            gain_channel_A = 128,
-            select_channel = 'A'
-        )
-        self.hx.reset()
-        self.hx.zero()  # tare to zero
+        try:
+            self.hx = HX711(
+                dout_pin       = TORSION_DT,
+                pd_sck_pin     = TORSION_SCK,
+                gain_channel_A = 128,
+                select_channel = 'A'
+            )
+            self.hx.reset()
+            self.hx.zero()  # tare to zero
+        except Exception as e:
+            print(f"[WARNING] HX711 init/zero failed: {e}")
+            self.hx = None
 
         # --- Initialize IR beam sensor ---
         GPIO.setup(IR_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
@@ -94,6 +98,7 @@ class Bartender(MenuDelegate):
             GPIO.setup(pump['pin'], GPIO.OUT, initial=GPIO.HIGH)
 
         print("Done initializing")
+
 
 
     @staticmethod
@@ -258,29 +263,45 @@ class Bartender(MenuDelegate):
 
     def pour(self, pin, wait):
         """
-        Activate pump, but break early on emergency_stop.
+        Activate a pump relay (active LOW) for up to `wait` seconds,
+        but abort immediately on emergency_stop.
         """
         GPIO.output(pin, GPIO.LOW)
         elapsed = 0.0
         step    = 0.1
-        while elapsed < wait and not self.emergency_stop:
+        while elapsed < wait:
+            # poll buttons to catch emergency-stop
+            self.pollButtons()
+            if self.emergency_stop:
+                break
+
             time.sleep(step)
             elapsed += step
+
         GPIO.output(pin, GPIO.HIGH)
 
-    def progressBar(self,waitTime):
-        interval=waitTime/100.0
+
+    def progressBar(self, waitTime):
+        """
+        Draw a 0?100% progress bar over `waitTime` seconds,
+        aborting if emergency_stop gets set.
+        """
+        interval = waitTime / 100.0
         for pct in range(101):
-            if self.emergency_stop: break
+            # poll buttons so emergency-stop takes effect here
+            self.pollButtons()
+            if self.emergency_stop:
+                break
+
             with canvas(self.led) as draw:
-                # draw bar outline
-                x,y=15,15
-                w=SCREEN_WIDTH-2*x
-                h=10
-                draw.rectangle((x,y,x+w,y+h), outline="white")
-                fill=int(pct/100.0*w)
-                draw.rectangle((x,y,x+fill,y+h), fill="white")
+                x, y = 15, 15
+                w, h = SCREEN_WIDTH - 2*x, 10
+                draw.rectangle((x, y, x+w, y+h), outline="white")
+                fill = int(pct/100.0 * w)
+                draw.rectangle((x, y, x+fill, y+h), fill="white")
+
             time.sleep(interval)
+
 
     def emergency_stop_cb(self, channel):
         """
@@ -296,27 +317,62 @@ class Bartender(MenuDelegate):
 
     def makeDrink(self, drink, ingredients):
         """
-        Main sequence to scale recipe for a fixed 250 mL glass, confirm, and pour,
-        with emergency-stop support.
+        Main sequence to:
+          0) wait for glass on the break-beam,
+          1) let the user pick Shot (50 mL) or Regular (250 mL),
+          2) confirm pour, and
+          3) pour with emergency support.
         """
         # Reset emergency flag at start
         self.emergency_stop = False
 
-        # 1) Scale ingredients to fixed 250 mL glass
-        glass_vol = 250.0  # mL
+        # 0) Wait for glass to break the beam
+        with canvas(self.led) as draw:
+            draw.text((0, 10), "Place glass to start", fill="white")
+        while not self.is_glass_present():
+            time.sleep(0.1)
+        with canvas(self.led) as draw:
+            draw.text((0, 10), "Glass detected!", fill="white")
+        time.sleep(0.5)
+
+        # 1) Glass-size picker
+        options = [("Shot", 50.0), ("Regular", 250.0)]
+        sel = 1  # start on Regular
+        while True:
+            with canvas(self.led) as draw:
+                draw.text((0, 5),  "Select Glass Size", fill="white")
+                draw.text((0, 25), f"< {options[sel][0]} >", fill="white")
+                draw.text((0, 45), f"{int(options[sel][1])} mL", fill="white")
+
+            # handle button presses
+            if GPIO.input(BTN_MENU) == GPIO.HIGH:
+                sel = (sel + 1) % 2
+                time.sleep(0.2)
+            elif GPIO.input(BTN_SPECIAL) == GPIO.HIGH:
+                sel = (sel - 1) % 2
+                time.sleep(0.2)
+            elif GPIO.input(self.btn_confirm) == GPIO.HIGH:
+                glass_vol = options[sel][1]
+                break
+            elif GPIO.input(self.btn_cancel) == GPIO.HIGH:
+                self.emergency_stop = True
+                return
+            time.sleep(0.05)
+
+        # 2) Scale ingredients to chosen glass volume
         total_vol = sum(ingredients.values())
         scale = glass_vol / float(total_vol)
         scaled = {ing: vol * scale for ing, vol in ingredients.items()}
 
-        # 2) Prompt user to confirm pour
+        # 3) Prompt user to confirm pour
         with canvas(self.led) as draw:
-            draw.text((0, 10), "250mL glass", fill="white")
+            draw.text((0, 10), f"{options[sel][0]} glass", fill="white")
             draw.text((0, 40), "Press Confirm", fill="white")
         self.wait_for_confirmation()
         if self.emergency_stop:
             return
 
-        # 3) Start pouring threads
+        # 4) Start pouring threads
         self.running = True
         threads = []
         max_time = 0.0
@@ -329,20 +385,21 @@ class Bartender(MenuDelegate):
                         target=self.pour,
                         args=(p['pin'], t)
                     ))
-                    
         for thr in threads:
             thr.start()
 
-        # 4) Display progress bar (can abort early on emergency_stop)
+        # 5) Display progress bar (can abort early on emergency_stop)
         self.progressBar(max_time)
 
-        # 5) Wait for all pump threads to finish
+        # 6) Wait for all pump threads to finish
         for thr in threads:
             thr.join()
 
-        # 6) Return to main menu
+        # 7) Return to main menu
         self.menuContext.showMenu()
         self.running = False
+
+
 
 
     def left_btn(self, ctx):
@@ -368,7 +425,14 @@ class Bartender(MenuDelegate):
                 self.led.draw_pixel(x + w, y + h)
 
     def wait_for_confirmation(self):
-        while GPIO.input(self.btn_confirm):
+        """
+        Block until the Confirm button goes HIGH, or until emergency_stop is triggered.
+        """
+        while GPIO.input(self.btn_confirm) == GPIO.LOW:
+            # check for emergency button
+            self.pollButtons()
+            if self.emergency_stop:
+                return
             time.sleep(0.1)
 
     def prime_pumps(self):
@@ -403,13 +467,28 @@ class Bartender(MenuDelegate):
 
 
     def is_glass_present(self):
-        return GPIO.input(IR_PIN) == 0
+        """
+        Returns True when the IR beam is broken (glass is in place).
+        The logic is inverted from before: pull-up means HIGH when blocked.
+        """
+        return GPIO.input(IR_PIN) == GPIO.HIGH
+
     
     def get_glass_weight(self):
         """
         Read and return the glass weight in grams, averaged over 5 samples.
+        If the HX711 failed to initialize, or an error occurs,
+        return 0.0 and log a warning.
         """
-        return self.hx.get_weight_mean(readings=5)
+        if not self.hx:
+            return 0.0
+
+        try:
+            return self.hx.get_weight_mean(readings=5)
+        except Exception as e:
+            print(f"[WARNING] HX711 read failed: {e}")
+            return 0.0
+
 
     def detect_glass_type(self):
         w = self.get_glass_weight()
