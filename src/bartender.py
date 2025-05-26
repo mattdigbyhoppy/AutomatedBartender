@@ -26,8 +26,8 @@ OLED_DC_PIN     = 16        # Data/Command pin for OLED
 ALCOHOLS = {"gin", "rum", "vodka", "tequila"}
 
 
-# Pump flow rate: seconds needed to pour 1 mL
-FLOW_RATE = 60.0 / 72.0     # 0.6 s per mL
+# Pump flow rate: seconds needed to deliver 1 mL
+FLOW_RATE = 0.48
 
 # Sensor & button GPIO assignments (BCM)
 IR_PIN       = 22  # IR break-beam sensor output
